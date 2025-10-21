@@ -10,7 +10,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, '../public')));
 
-// Store printer data
+// Store printer data from bridge server
 let printerData = [];
 let lastUpdate = null;
 
@@ -27,43 +27,14 @@ const printers = [
     { name: 'WIHD', ip: '136.167.66.220' }
 ];
 
-// Demo data (always works)
-function getDemoData() {
-    return printers.map(printer => {
-        const isColorPrinter = printer.name.toLowerCase().includes('color');
-        const isOnline = true; // Always show online for demo
-        
-        return {
-            name: printer.name,
-            ip: printer.ip,
-            status: 'online',
-            reachable: true,
-            toners: isColorPrinter ? [
-                { color: 'Black', level: 65 },
-                { color: 'Cyan', level: 45 },
-                { color: 'Magenta', level: 55 },
-                { color: 'Yellow', level: 35 }
-            ] : [
-                { color: 'Black', level: 75 }
-            ],
-            trays: [
-                { name: 'Tray 1', status: 'OK' },
-                { name: 'Tray 2', status: 'OK' },
-                { name: 'Manual Feed', status: 'OK' }
-            ],
-            responseTime: 50,
-            timestamp: new Date().toISOString(),
-            method: 'demo'
-        };
-    });
-}
-
 // API Routes
 app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'OK', 
         message: 'BC Printer Monitor is running on Render',
         timestamp: new Date().toISOString(),
+        dataSource: lastUpdate ? 'bridge-server' : 'ready-for-data',
+        lastUpdate: lastUpdate,
         printerCount: printers.length
     });
 });
@@ -71,17 +42,25 @@ app.get('/api/health', (req, res) => {
 // Bridge data endpoint
 app.post('/api/bridge-data', (req, res) => {
     try {
-        console.log('📡 Received data from bridge server');
+        console.log('📡 Received real printer data from bridge server!');
         const { printers } = req.body;
         
         if (printers && Array.isArray(printers)) {
             printerData = printers;
             lastUpdate = new Date().toISOString();
-            console.log(`✅ Stored real data for ${printers.length} printers`);
+            
+            // Log the real data we received
+            const onlineCount = printers.filter(p => p.status === 'online').length;
+            const snmpCount = printers.filter(p => p.method === 'snmp').length;
+            
+            console.log(`✅ Stored REAL data for ${onlineCount}/${printers.length} online printers`);
+            console.log(`🎨 ${snmpCount} printers providing real SNMP toner levels`);
             
             res.json({ 
                 success: true, 
                 message: `Received real data for ${printers.length} printers`,
+                online: onlineCount,
+                withSNMP: snmpCount,
                 timestamp: lastUpdate
             });
         } else {
@@ -101,7 +80,7 @@ app.post('/api/bridge-data', (req, res) => {
 
 // Get printer data
 app.get('/api/printers', (req, res) => {
-    const data = printerData.length > 0 ? printerData : getDemoData();
+    const data = printerData.length > 0 ? printerData : getReadyMessage();
     const onlineCount = data.filter(p => p.status === 'online').length;
     
     res.json({
@@ -109,7 +88,7 @@ app.get('/api/printers', (req, res) => {
         data: data,
         count: data.length,
         online: onlineCount,
-        dataSource: printerData.length > 0 ? 'bridge-server' : 'demo',
+        dataSource: printerData.length > 0 ? 'bridge-server' : 'ready',
         lastUpdate: lastUpdate,
         timestamp: new Date().toISOString()
     });
@@ -117,16 +96,30 @@ app.get('/api/printers', (req, res) => {
 
 // POST endpoint for frontend
 app.post('/api/printers/status', (req, res) => {
-    const data = printerData.length > 0 ? printerData : getDemoData();
+    const data = printerData.length > 0 ? printerData : getReadyMessage();
+    const onlineCount = data.filter(p => p.status === 'online').length;
     
     res.json({
         success: true,
         data: data,
-        dataSource: printerData.length > 0 ? 'bridge-server' : 'demo',
+        count: data.length,
+        online: onlineCount,
+        dataSource: printerData.length > 0 ? 'bridge-server' : 'ready',
         lastUpdate: lastUpdate,
         timestamp: new Date().toISOString()
     });
 });
+
+function getReadyMessage() {
+    return printers.map(printer => ({
+        name: printer.name,
+        ip: printer.ip,
+        status: 'unknown',
+        message: 'Waiting for bridge server data...',
+        toners: [{ color: 'Black', level: 0 }],
+        trays: [{ name: 'Tray 1', status: 'UNKNOWN' }]
+    }));
+}
 
 // Serve frontend
 app.get('*', (req, res) => {
@@ -135,6 +128,6 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`🚀 BC Printer Monitor running on port ${PORT}`);
-    console.log(`📍 Ready for bridge server connections`);
+    console.log(`📍 Ready to receive real data from bridge server`);
     console.log(`🖨️  ${printers.length} printers configured`);
 });
